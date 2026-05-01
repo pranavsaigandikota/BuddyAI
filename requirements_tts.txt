@@ -1,0 +1,19 @@
+--extra-index-url https://download.pytorch.org/whl/cu124
+
+# Core Server
+fastapi
+uvicorn
+pydantic
+python-multipart
+
+# Audio & AI
+numpy
+soundfile
+torch==2.4.1
+torchaudio==2.4.1
+torchvision==0.19.1
+
+# Chatterbox & Bug Fixes
+chatterbox-tts
+librosa
+setuptools<81

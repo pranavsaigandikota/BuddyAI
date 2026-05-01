@@ -1,0 +1,25 @@
+# Core Server
+fastapi
+uvicorn[standard]
+pydantic
+python-multipart
+httpx
+
+# Desktop Control & Vision
+pyautogui
+mss
+Pillow
+
+# Audio & Speech-to-Text
+numpy
+sounddevice
+soundfile
+faster-whisper
+
+# Robot / Serial
+pyserial
+
+# Search & News
+duckduckgo-search
+
+# Planner (built-in to Python, no install needed — sqlite3)

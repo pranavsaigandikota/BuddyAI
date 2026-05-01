@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Buddy AI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar glass">
+
+            <!-- Logo -->
+            <div class="sidebar-header">
+                <div class="buddy-logo">
+                    <div class="logo-icon">B</div>
+                    <span>Buddy AI</span>
+                </div>
+            </div>
+
+            <!-- Audio Devices -->
+            <div class="section-row">
+                <div class="section-label">Audio Devices</div>
+                <button id="refresh-devices" class="icon-btn" title="Refresh device list">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M23 4v6h-6" />
+                        <path d="M1 20v-6h6" />
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                    </svg>
+                </button>
+            </div>
+
+            <div class="control-group">
+                <div class="label-row">
+                    <label for="mic-select">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+                            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                            <line x1="12" y1="19" x2="12" y2="22" />
+                        </svg>
+                        Microphone
+                    </label>
+                    <button id="mute-btn" class="mini-btn" title="Toggle Mute">Mute</button>
+                </div>
+                <select id="mic-select"></select>
+                <div class="mic-level-container" title="Microphone Input Level">
+                    <div id="mic-level-bar" class="mic-level-bar"></div>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <div class="label-row">
+                    <label for="speaker-select">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" />
+                        </svg>
+                        Speaker
+                    </label>
+                    <button id="test-spk-btn" class="mini-btn" title="Play test audio">Test</button>
+                    <button id="test-mouth-btn" class="mini-btn" title="Test robot mouth">Mouth</button>
+                </div>
+                <select id="speaker-select"></select>
+            </div>
+
+            <!-- Memory -->
+            <div class="section-row mt-section">
+                <div class="section-label">Memory Facts
+                    <span id="memory-count" class="badge">0</span>
+                </div>
+            </div>
+            <ul id="memory-list" class="memory-list">
+                <li class="memory-empty">No memories yet. Start talking to Buddy!</li>
+            </ul>
+
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content glass">
+            <header class="top-bar">
+                <div class="status-pill" id="status-pill">
+                    <span id="status-dot" class="dot listening"></span>
+                    <span id="status-text">Connecting...</span>
+                </div>
+                <div class="top-right-hint">Just speak to activate</div>
+            </header>
+
+            <div class="visualizer-container">
+                <div id="wave" class="wave-idle">
+                    <div class="bar"></div>
+                    <div class="bar"></div>
+                    <div class="bar"></div>
+                    <div class="bar"></div>
+                    <div class="bar"></div>
+                    <div class="bar"></div>
+                    <div class="bar"></div>
+                    <div class="bar"></div>
+                    <div class="bar"></div>
+                </div>
+            </div>
+
+            <div class="chat-container" id="chat-box">
+                <div class="chat-welcome">
+                    <p>Buddy is listening. Just speak and it will respond.</p>
+                </div>
+            </div>
+        </main>
+    </div>
+    <script src="app.js"></script>
+</body>
+
+</html>
