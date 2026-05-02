@@ -1,46 +1,68 @@
-# BuddyAI: A Local Multimodal PC Assistant
+# Project Antigravity: Buddy AI
+### A Local Multimodal PC Assistant with East London Grit
 
-BuddyAI is a comprehensive, locally-hosted digital assistant designed for PC automation, information retrieval, and multimodal interaction. Developed as a privacy-focused alternative to commercial assistants, BuddyAI integrates advanced large language models (LLMs), vision systems, and hardware-level control to provide a seamless desktop experience.
+**Project Antigravity** is a high-performance, privacy-first PC assistant designed to live natively on your hardware. It blends state-of-the-art Multimodal LLMs, real-time spatial tracking, and zero-shot voice cloning to create an entity that doesn't just process commands—it observes, responds, and remembers.
 
-## Objective
-The primary goal of this project was to construct a robust assistant capable of operating entirely on local hardware. By leveraging local inference via Ollama and Faster-Whisper, BuddyAI avoids the latency and privacy concerns associated with cloud-based AI services. The system is designed to act as an efficient PC entity capable of managing tasks, controlling media, and interpreting visual data from the user's screen.
+---
 
-## System Architecture
-The application is built on a modular Python-based backend using FastAPI, interfacing with a web-based frontend.
+## 🦾 The Persona: Billy Butcher
+Buddy isn't your typical "polite" AI. He is modeled after **Billy Butcher** (*The Boys*).
+- **Hardened, Cynical, and Direct**: No "How can I help you today?" fluff.
+- **East London Grit**: Authentic slang, dropping H's, and a healthy dose of sarcasm.
+- **Conversational Flow**: Optimized to speak in winding, natural sentences rather than robotic fragments.
 
-### 1. Natural Language Processing
-- **Inference Engine**: Utilizes Ollama running the Qwen-2.5-VL model. This model provides both high-quality text generation and vision-language capabilities.
-- **Context Management**: Implements a persistent JSON-based memory system that stores user preferences and facts across sessions.
-- **System Prompting**: The agent is configured with a specific persona to provide concise and direct communication.
+---
 
-### 2. Audio Processing Pipeline
-- **Speech-to-Text (STT)**: Employs the `faster-whisper` library for low-latency transcription of microphone input.
-- **Text-to-Speech (TTS)**: Interfaces with a custom local server to generate voice responses using high-quality synthesized audio.
-- **Hardware Integration**: Uses the `sounddevice` and `soundfile` libraries for direct interaction with system audio drivers, supporting device selection and mute functionality.
+## 🏗️ Architecture: "Antigravity Slim"
+A primary challenge was running a full multimodal stack (VLM + STT + TTS) on a single consumer GPU (16GB VRAM) while maintaining low latency.
 
-### 3. Vision and PC Automation
-- **Visual Intelligence**: Captures screen data using the `mss` library. The system can interpret user activity by injecting screenshots into the Vision-Language Model.
-- **Desktop Control**: Utilizes `pyautogui` for volume regulation, media playback control, and application execution (e.g., Discord, VS Code, Steam).
+### **Engineering Decisions & Rationale**
 
-### 4. Planner and Data Services
-- **Task Management**: A SQLite-backed planner (`buddy_planner.py`) allows for persistent task and calendar event tracking.
-- **Information Retrieval**: Integrates search capabilities for real-time web data, weather updates, and news aggregation.
+#### **1. VRAM Optimization (CPU/GPU Load Balancing)**
+- **Decision**: STT and Vision-Preprocessing are offloaded to the **CPU**, while the **GPU** is reserved exclusively for the LLM (`Qwen2.5-VL`) and the TTS Synthesis (`Qwen3-TTS`).
+- **Why**: Standard ASR models like Whisper can be greedy with VRAM. By running Parakeet on the CPU, we ensure the LLM has maximum overhead for complex vision reasoning without causing OOM (Out of Memory) errors during synthesis.
 
-## Technical Requirements
-- **Python 3.10+**
-- **Ollama** (configured with a Vision-capable model)
-- **CUDA-compatible GPU** (highly recommended for Faster-Whisper and LLM acceleration)
-- **Windows OS** (optimized for Windows paths and application mapping)
+#### **2. Speech-to-Text: Parakeet (0.6B) on CPU**
+- **Decision**: Switched from Faster-Whisper to NVIDIA’s **Parakeet-CTC**.
+- **Why**: Parakeet is exceptionally efficient. Running the 0.6B parameter model on the CPU provides near-instant transcription with higher accuracy for accented speech (crucial for Butcher's slang) without touching GPU resources.
 
-## Project Structure
-- `buddy_ui_server.py`: Main FastAPI entry point and system orchestrator.
-- `buddy_planner.py`: Database management for tasks and events.
-- `buddy_search.py`: Web and news search integration.
-- `ui/`: Frontend assets (HTML, CSS, JavaScript).
-- `memory/`: Persistent storage for logs, facts, and databases.
+#### **3. Text-to-Speech: Qwen3-TTS with Zero-Shot Cloning**
+- **Decision**: Integrated **Qwen3-TTS-0.6B-Base** for all synthesis.
+- **Why**: Traditional TTS (like Kokoro or gTTS) sounds too clean for a character like Butcher. Qwen3-TTS allows for **Zero-Shot Voice Cloning**. By providing a 10s reference clip and transcript, Buddy inherits the specific grit, texture, and emotional weight of the target persona.
 
-## Setup
-1. Ensure Ollama is running with the required model.
-2. Install dependencies via `pip install -r requirements_buddy.txt`.
-3. Configure the TTS server endpoint in the server script if necessary.
-4. Execute `run_buddy.bat` or `run_buddy_app.bat` to initialize the system.
+#### **4. Dual-Track Vision: YOLO vs. VLM**
+- **Decision**: Use **YOLOv8** for spatial tracking and **Qwen2.5-VL** for scene understanding.
+- **Why**: 
+    - **YOLO** handles the "dumb" fast tasks: tracking the user's head and tilting the physical Kinect motor in real-time.
+    - **VLM** handles the "smart" tasks: looking at the user's screen or camera feed to answer questions.
+    - **Clean Feed Logic**: We modified the pipeline so YOLO draws its tracking boxes on a local UI for the user to see, but sends a **clean, unmodified image** to the LLM. This prevents the LLM from getting confused by neon green boxes and stick figures.
+
+---
+
+## 🛠️ Key Features
+- **Spatial Awareness**: Real-time Kinect motor control to keep the user in frame.
+- **Multimodal Context**: Can see your screen ("What am I looking at?") and your room ("What am I holding?").
+- **Persistent Memory**: Remembers personal facts, preferences, and past conversations via a local JSON memory bank.
+- **Live Voice Reload**: A dedicated UI button to hot-swap voice reference files without a server restart.
+- **PC Control**: Native hooks for Volume, Media, YouTube, and application launching (Discord, VS Code, etc.).
+
+---
+
+## 📂 Project Structure
+- `run_antigravity.py`: The master orchestrator that spins up the LLM, Vision, and UI servers.
+- `buddy_ui_server.py`: The central nervous system (FastAPI, LLM Logic, TTS Synthesis).
+- `buddy_vision.py`: Spatial tracking, YOLO processing, and Kinect hardware control.
+- `buddy_planner.py`: SQLite-backed task and event management.
+- `buddy_voice/`: Contains the reference audio and text for voice cloning.
+- `ui/`: Premium glass-morphic web interface.
+
+---
+
+## 🚀 Setup & Launch
+1. **Ollama**: Install and run `ollama serve`. Pull the model: `ollama pull qwen2.5-vl:3b`.
+2. **Kinect**: Ensure Kinect V2 is connected and `KinectServer.exe` is in the root.
+3. **Environment**: Install dependencies from `requirements_buddy.txt` and `requirements_tts.txt`.
+4. **Run**: Execute `python run_antigravity.py`.
+
+---
+*Properly bloody marvelous, innit?*
