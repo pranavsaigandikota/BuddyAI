@@ -3,16 +3,19 @@
 :root {
     --bg-deep:       #080f1e;
     --bg-mid:        #0f172a;
+    --surface:       rgba(15, 23, 42, 0.9);
     --glass-bg:      rgba(15, 23, 42, 0.75);
     --glass-border:  rgba(255, 255, 255, 0.07);
     --accent-blue:   #38bdf8;
     --accent-purple: #8b5cf6;
+    --blue:          #38bdf8;
     --text-primary:  #f1f5f9;
     --text-muted:    #64748b;
     --text-dim:      #94a3b8;
     --green:         #10b981;
     --amber:         #f59e0b;
     --red:           #ef4444;
+    --border:        rgba(255, 255, 255, 0.07);
 }
 
 body {
@@ -198,6 +201,34 @@ body {
 }
 .control-group select:hover { border-color: rgba(255,255,255,0.15); }
 .control-group select:focus { border-color: var(--accent-purple); }
+
+.action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: rgba(139, 92, 246, 0.15);
+    border: 1px solid rgba(139, 92, 246, 0.3);
+    color: var(--accent-purple);
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 10px;
+    border-radius: 9px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+}
+.action-btn:hover {
+    background: rgba(139, 92, 246, 0.25);
+    border-color: var(--accent-purple);
+    color: #fff;
+    box-shadow: 0 0 12px rgba(139, 92, 246, 0.2);
+}
+.action-btn:active { transform: scale(0.98); }
+.action-btn svg { transition: transform 0.3s; }
+.action-btn:hover svg { transform: rotate(180deg); }
+
+.w-full { width: 100%; }
 
 /* Mic level bar */
 .mic-level-container {
@@ -431,4 +462,28 @@ body {
     border: 1px solid rgba(139, 92, 246, 0.25);
     border-bottom-left-radius: 4px;
     color: var(--text-primary);
+}
+
+/* ── System Thoughts ─────────────────────────────────────────────────────── */
+.msg.thought {
+    align-self: center;
+    align-items: center;
+    opacity: 0.65;
+    max-width: 90%;
+}
+
+.msg.thought .meta {
+    color: var(--blue);
+    font-size: 0.65rem;
+}
+
+.msg.thought .bubble {
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px dashed rgba(56,189,248,0.2);
+    border-radius: 8px;
+    font-size: 0.78rem;
+    font-style: italic;
+    padding: 5px 12px;
+    line-height: 1.4;
 }

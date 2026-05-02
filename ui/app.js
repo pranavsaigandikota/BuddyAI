@@ -26,6 +26,7 @@ function connectWS() {
         const msg = JSON.parse(data);
         if (msg.type === 'state') updateState(msg.state, msg.text);
         else if (msg.type === 'chat') appendMessage(msg.role, msg.content);
+        // else if (msg.type === 'thought') appendMessage('thought', msg.content);
         else if (msg.type === 'memory_refresh') loadMemory();
         else if (msg.type === 'volume') {
             // level is already 0-100 from backend
@@ -69,8 +70,10 @@ function appendMessage(role, content) {
 
     const wrap = document.createElement('div');
     wrap.className = `msg ${role}`;
+    let roleLabel = role === 'user' ? 'You' : 'Buddy';
+    if (role === 'thought') roleLabel = 'System Thought';
     wrap.innerHTML = `
-        <div class="meta">${role === 'user' ? 'You' : 'Buddy'}</div>
+        <div class="meta">${roleLabel}</div>
         <div class="bubble">${escapeHtml(content)}</div>
     `;
     chatBox.appendChild(wrap);
@@ -107,7 +110,7 @@ async function setDevice(type, id) {
     await fetch(`${API}/api/devices`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type, id: parseInt(id) })
+        body: JSON.stringify({ type, id })
     }).catch(console.warn);
 }
 
@@ -150,6 +153,38 @@ testBtn.addEventListener('click', async () => {
         testBtn.disabled = false;
         testBtn.textContent = 'Test';
     }, 4000); // Reset button after a few seconds
+});
+
+const reloadVoiceBtn = document.getElementById('reload-voice-btn');
+reloadVoiceBtn.addEventListener('click', async () => {
+    const originalContent = reloadVoiceBtn.innerHTML;
+    reloadVoiceBtn.disabled = true;
+    reloadVoiceBtn.textContent = 'Reloading...';
+    
+    try {
+        const res = await fetch(`${API}/api/reload_voice`, { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.status === 'ok') {
+            reloadVoiceBtn.innerHTML = 'Success!';
+            reloadVoiceBtn.style.color = 'var(--green)';
+            reloadVoiceBtn.style.borderColor = 'var(--green)';
+        } else {
+            reloadVoiceBtn.innerHTML = 'Failed';
+            reloadVoiceBtn.style.color = 'var(--red)';
+            reloadVoiceBtn.style.borderColor = 'var(--red)';
+        }
+    } catch (e) {
+        console.error('Voice reload failed:', e);
+        reloadVoiceBtn.innerHTML = 'Error';
+    }
+    
+    setTimeout(() => {
+        reloadVoiceBtn.disabled = false;
+        reloadVoiceBtn.innerHTML = originalContent;
+        reloadVoiceBtn.style.color = '';
+        reloadVoiceBtn.style.borderColor = '';
+    }, 2000);
 });
 
 // ── Memory ─────────────────────────────────────────────────────────────────

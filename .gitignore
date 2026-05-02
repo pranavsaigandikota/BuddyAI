@@ -36,3 +36,12 @@ pip-delete-this-directory.txt
 # OS
 .DS_Store
 Thumbs.db
+
+# Large models & archives
+parakeet.tar.bz2
+*.tar.bz2
+*.pt
+
+# Session Data
+memory/
+buddy_debug.log

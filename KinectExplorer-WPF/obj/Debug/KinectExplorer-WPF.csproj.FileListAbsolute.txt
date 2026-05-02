@@ -1,0 +1,17 @@
+c:\Users\filma\Documents\BuddyAI\KinectExplorer-WPF\bin\Debug\KinectExplorer-WPF.exe.config
+c:\Users\filma\Documents\BuddyAI\KinectExplorer-WPF\bin\Debug\KinectExplorer-WPF.exe
+c:\Users\filma\Documents\BuddyAI\KinectExplorer-WPF\bin\Debug\KinectExplorer-WPF.pdb
+c:\Users\filma\Documents\BuddyAI\KinectExplorer-WPF\bin\Debug\Microsoft.Samples.Kinect.WpfViewers.dll
+c:\Users\filma\Documents\BuddyAI\KinectExplorer-WPF\bin\Debug\Microsoft.Samples.Kinect.WpfViewers.pdb
+c:\Users\filma\Documents\BuddyAI\KinectExplorer-WPF\obj\Debug\KinectExplorer-WPF.csprojResolveAssemblyReference.cache
+c:\Users\filma\Documents\BuddyAI\KinectExplorer-WPF\obj\Debug\KinectWindow.g.cs
+c:\Users\filma\Documents\BuddyAI\KinectExplorer-WPF\obj\Debug\MainWindow.g.cs
+c:\Users\filma\Documents\BuddyAI\KinectExplorer-WPF\obj\Debug\App.g.cs
+c:\Users\filma\Documents\BuddyAI\KinectExplorer-WPF\obj\Debug\GeneratedInternalTypeHelper.g.cs
+c:\Users\filma\Documents\BuddyAI\KinectExplorer-WPF\obj\Debug\KinectExplorer-WPF_MarkupCompile.cache
+c:\Users\filma\Documents\BuddyAI\KinectExplorer-WPF\obj\Debug\KinectExplorer-WPF_MarkupCompile.lref
+c:\Users\filma\Documents\BuddyAI\KinectExplorer-WPF\obj\Debug\KinectWindow.baml
+c:\Users\filma\Documents\BuddyAI\KinectExplorer-WPF\obj\Debug\MainWindow.baml
+c:\Users\filma\Documents\BuddyAI\KinectExplorer-WPF\obj\Debug\KinectExplorer-WPF.g.resources
+c:\Users\filma\Documents\BuddyAI\KinectExplorer-WPF\obj\Debug\KinectExplorer-WPF.exe
+c:\Users\filma\Documents\BuddyAI\KinectExplorer-WPF\obj\Debug\KinectExplorer-WPF.pdb

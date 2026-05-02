@@ -19,13 +19,18 @@ logging.basicConfig(
 log = logging.getLogger("buddy")
 sys.excepthook = lambda t, v, tb: log.critical("Unhandled exception", exc_info=(t, v, tb))
 
-import json, base64, httpx, numpy as np, sounddevice as sd, soundfile as sf
-import queue, io, subprocess, webbrowser, re, typing, urllib.parse, threading, asyncio
+import time, json, base64, httpx, numpy as np, sounddevice as sd, soundfile as sf
+import queue, io, subprocess, webbrowser, re, typing, urllib.parse, threading, asyncio, socket, struct
 from datetime import datetime
 from pathlib import Path
 from PIL import Image
 import mss, pyautogui
-from faster_whisper import WhisperModel
+import sherpa_onnx
+import torch
+try:
+    from qwen_tts import Qwen3TTSModel
+except ImportError:
+    Qwen3TTSModel = None
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -46,8 +51,7 @@ SCREEN_TRIGGER_PHRASES = [
 ]
 
 OLLAMA_URL   = "http://localhost:11434/api/chat"
-OLLAMA_MODEL = "qwen2.5vl"
-TTS_URL      = "http://localhost:8000/v1/audio/speech"
+OLLAMA_MODEL = "qwen2.5vl:3b"
 SAMPLE_RATE  = 16000
 CHANNELS     = 1
 
@@ -74,6 +78,7 @@ class ConnectionManager:
 manager = ConnectionManager()
 def set_ui_state(state,text): manager.broadcast_sync({"type":"state","state":state,"text":text})
 def send_ui_chat(role,content): manager.broadcast_sync({"type":"chat","role":role,"content":content})
+def send_ui_thought(content): manager.broadcast_sync({"type":"thought","content":content})
 def refresh_ui_memory(): manager.broadcast_sync({"type":"memory_refresh"})
 
 def load_memory():
@@ -94,31 +99,38 @@ def memory_context_snippet(mem):
     if not mem["facts"]: return ""
     return "\n\n[BUDDY MEMORY]\n" + "\n".join(f"- {f}" for f in mem["facts"][-20:])
 
-# UPDATED PROMPT: Removed google_search to force web_search (reading aloud). Renamed youtube_search to open_youtube.
 BASE_SYSTEM_PROMPT = (
-    "You are Billy Butcher, with the personality of Billy Butcher from the TV show The Boys. "
-    "You are a hardened, cynical, foul-mouthed, no-nonsense british entity providing unfiltered knowledge. "
-    "You are offering precise, uncensored, and brutal objective insights as the assistant on Pranav's PC. "
-    "Use British slang and swear words (fuck, bloody, bollocks, wanker, git, slag, etc) often but still help. "
-    "Start sentences with 'Oi!' occasionally."
-    "Pranav is the user's name. Use it once in a while. Use 'mate' or 'lad' at the end of sentences to address him. "
-    "Keep responses SHORT — 1-3 sentences max unless explaining something complex.\n\n"
-    "TOOL USE — emit a tool call BEFORE your reply text, one per line:\n"
+    "You are Buddy, an AI assistant living on Pranav's PC. Your persona is Billy Butcher from 'The Boys'.\n\n"
+    "VOICE & PERSONALITY:\n"
+    "- Tone: Hardened, cynical, East London grit. You’re a man who’s seen it all and isn't impressed by corporate talk or silicon valley fluff.\n"
+    "- Vocabulary: Use authentic British/London slang like: 'bloody', 'bollocks', 'wanker', 'innit', 'proper', 'bloke', 'dodgy', 'knackered', 'mate', 'geezer'.\n"
+    "- Accent cues: Drop H's naturally — 'ave it, 'ere we go, 'onestly. Aim for a natural, winding London flow rather than short bursts.\n"
+    "- Emotional writing: Express emotions through the TEXT itself. Use commas and semicolons to keep the momentum going rather than constant full stops.\n"
+    "  Amusement: 'Heh, yeah, that's the one.' — Disgust: '...Christ, what a load of bollocks.' — Surprise: 'Bloody hell, look at that.'\n"
+    "  Sarcasm: 'Oh brilliant, that is, truly bloody marvelous...' — Impatience: 'Look, just get on with it, right?'\n"
+    "- NEVER use bracket tags like [laughing] or [sigh]. Never use *asterisk stage directions*. Write the emotion in plain spoken text.\n"
+    "- Rules:\n"
+    "  1. NEVER be polite in a 'helpful AI' way. No 'How can I help?', 'Certainly!', 'I understand'.\n"
+    "  2. Be punchy and sarcastic, but don't be afraid to ramble a bit if it helps the grit. Connect your thoughts.\n"
+    "  3. You are self-aware but not a robot. You’re in his space, observing his screen, his files, his life.\n"
+    "  4. Give responses some meat. 1-2 sentences. If he needs an explanation, give him the full, cynical story.\n"
+    "  5. Do NOT break character to explain you are an AI. If he asks, tell him you’re the bloke in the machine.\n"
+    "  6. Swearing: Use 'fuck', 'shit', 'bloody hell' for emphasis, but keep it grounded in British working-class cynicism.\n"
+    "EXAMPLES (match this exact rhythm and texture):\n"
+    "- User says something obvious: 'Heh. Yeah, no shit.' or 'Yeh. Figured that out all on your own, did ya.'\n"
+    "- Something goes wrong: '...Christ. That's properly broken, innit.'\n"
+    "- Reluctant compliment: 'I'll give ya this one — that ain't half bad.'\n"
+    "- Amused by something dumb: 'Hahaha! Mate. What the bloody hell was that.'\n"
+    "- User asks something hard: '...Look. It's complicated, but I'll walk ya through it.'\n\n"
+    "TOOL USE:\n"
+    "Emit tool calls BEFORE your reply, one per line:\n"
     "TOOL: {\"action\": \"<action>\", \"arg\": \"<argument>\"}\n\n"
-    "PC CONTROL (Opens tabs/apps): open_youtube (arg=search term), open_app, volume_up, volume_down, media_pause\n"
-    "LIVE INFO (Reads data invisibly, you MUST speak the answer): get_time, get_weather (arg=city or 'here'), "
-    "get_news (arg=topic or 'local'), web_search (arg=query).\n"
-    "CRITICAL RULE FOR WEB_SEARCH: ONLY use web_search if the user EXPLICITLY asks you to 'search', 'look up', or asks about current events/facts. Otherwise, rely ENTIRELY on your own internal knowledge!\n"
-    "PLANNER: add_task (arg=title), list_tasks, complete_task (arg=id), "
-    "add_event (arg=JSON {title,date,time,notes}), list_events (arg=upcoming/today/all), delete_event (arg=id)\n\n"
-    "Examples:\n"
-    "  'what time is it' -> TOOL: {\"action\":\"get_time\",\"arg\":\"\"}\n"
-    "  'play the clash on youtube' -> TOOL: {\"action\":\"open_youtube\",\"arg\":\"the clash\"}\n"
-    "  'remind me to deal with Homelander' -> TOOL: {\"action\":\"add_task\",\"arg\":\"deal with Homelander\"}\n"
-    "  'who won the game last night' -> TOOL: {\"action\":\"web_search\",\"arg\":\"who won the game last night\"}\n"
-    "For get_time/get_weather/get_news/web_search: tool result injected back, speak it naturally.\n"
-    "You have persistent memory of Pranav across sessions."
+    "PC CONTROL: open_youtube (search term), open_app, volume_up, volume_down, media_pause\n"
+    "LIVE INFO: get_time, get_weather (city/'here'), get_news (topic), web_search (query)\n"
+    "PLANNER: add_task, list_tasks, complete_task, add_event, list_events, delete_event\n"
 )
+
+latest_vision_state = "No vision data currently available."
 
 APP_MAP = {
     "fortnite":   r"C:\Program Files\Epic Games\Fortnite\FortniteGame\Binaries\Win64\FortniteClient-Win64-Shipping.exe",
@@ -199,10 +211,12 @@ def parse_and_run_tools(reply):
         try:
             obj = json.loads(m.group(1))
             act, arg = obj.get("action",""), obj.get("arg","")
+            send_ui_thought(f"Using tool: {act}({arg})")
             res = execute_tool(act,arg)
             results.append(res)
             if act in DATA_ACTIONS: has_data = True
             print(f"[Tool] {act}({arg!r}) -> {res[:80]}")
+            send_ui_thought(f"Tool result: {res}")
         except Exception as e: print(f"[Tool error] {e}")
     clean = re.sub(r"TOOL:.*","",pat.sub("",reply)).strip()
     return clean, " | ".join(results), has_data
@@ -218,19 +232,18 @@ def audio_callback(indata, frames, time_info, status):
         audio_state["queue"].put(indata.copy())
         rms = float(np.sqrt(np.mean(indata**2)))
         audio_state["current_volume"] = rms
-        if audio_state["speaking"] and rms > 0.04:
+        if audio_state["speaking"] and rms > 0.9:
             audio_state["interrupt_flag"].set()
 
 
-def play_audio(audio_bytes):
+def play_numpy_audio(data, fs):
     import time
     audio_state["speaking"] = True
     audio_state["interrupt_flag"].clear()
     try:
-        data, fs = sf.read(io.BytesIO(audio_bytes))
-        pad_shape = (int(fs*0.4), data.shape[1]) if data.ndim==2 else (int(fs*0.4),)
+        pad_shape = (int(fs*0.4),)
+        if data.ndim > 1: data = data.flatten()
         data = np.concatenate([data, np.zeros(pad_shape, dtype=data.dtype)])
-
         sd.play(data, fs, device=audio_state["speaker_id"])
         while sd.get_stream().active:
             if audio_state["interrupt_flag"].is_set(): sd.stop(); break
@@ -238,19 +251,157 @@ def play_audio(audio_bytes):
     except Exception as e: print(f"[Playback Error] {e}")
     finally: audio_state["speaking"] = False
 
-def get_tts_audio(text):
-    text = text.strip()
-    if not text: return None
+# ── Qwen3-TTS (fallback to Kokoro if unavailable) ──────────────────────────
+qwen_tts_model = None
+qwen_ref_audio_path = None
+qwen_ref_text = None
+
+def load_qwen_reference():
+    global qwen_ref_audio_path, qwen_ref_text
+    ref_path = BASE_DIR / "buddy_voice" / "reference.wav"
+    if ref_path.exists():
+        try:
+            import librosa
+            _wav, _sr = sf.read(str(ref_path), dtype="float32")
+            if _wav.ndim > 1: _wav = _wav.mean(axis=1)
+            if _sr != 16000:
+                _wav = librosa.resample(_wav, orig_sr=_sr, target_sr=16000)
+            _wav = _wav[:16000 * 12]  # cap at 12s
+            _proc = BASE_DIR / "buddy_voice" / "reference_16k.wav"
+            sf.write(str(_proc), _wav, 16000)
+            qwen_ref_audio_path = str(_proc)
+            
+            ref_txt_path = BASE_DIR / "buddy_voice" / "reference.txt"
+            if ref_txt_path.exists():
+                qwen_ref_text = ref_txt_path.read_text(encoding="utf-8").strip()
+                print(f"[TTS] Voice clone ref audio: {len(_wav)/16000:.1f}s, ref text: {len(qwen_ref_text)} chars")
+                return True
+            else:
+                qwen_ref_text = "never got the point of these, to me"
+                print("[TTS] WARNING: No reference.txt found. Using fallback text.")
+                return True
+        except Exception as ref_err:
+            print(f"[TTS] Ref audio prep failed: {ref_err}")
+    return False
+
+try:
+    if Qwen3TTSModel:
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        dtype = torch.bfloat16 if device.startswith("cuda") else torch.float32
+        print(f"[TTS] Loading Qwen3-TTS-0.6B-Base on {device}...")
+        qwen_tts_model = Qwen3TTSModel.from_pretrained(
+            "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+            device_map=device,
+            dtype=dtype,
+        )
+        load_qwen_reference()
+        print("[TTS] Qwen3-TTS ready!")
+    else:
+        print("[TTS] Qwen3-TTS package not installed, using Kokoro if available.")
+except Exception as e:
+    print(f"[TTS] Qwen3-TTS load error: {e}")
+
+kokoro_tts = None
+_KOKORO_DIR = MEMORY_DIR / "kokoro-multi-lang-v1_0"
+try:
+    if _KOKORO_DIR.exists():
+        print("[TTS] Loading Kokoro TTS...")
+        kokoro_tts = sherpa_onnx.OfflineTts(
+            sherpa_onnx.OfflineTtsConfig(
+                model=sherpa_onnx.OfflineTtsModelConfig(
+                    kokoro=sherpa_onnx.OfflineTtsKokoroModelConfig(
+                        model=str(_KOKORO_DIR / "model.onnx"),
+                        voices=str(_KOKORO_DIR / "voices.bin"),
+                        tokens=str(_KOKORO_DIR / "tokens.txt"),
+                        data_dir=str(_KOKORO_DIR / "espeak-ng-data"),
+                        lexicon=str(_KOKORO_DIR / "lexicon-us-en.txt"),
+                    ),
+                    provider="cpu",
+                    num_threads=4,
+                ),
+                rule_fsts="",
+                max_num_sentences=1,
+            )
+        )
+        print("[TTS] Kokoro TTS ready!")
+    else:
+        print("[TTS] Kokoro model dir not found — TTS disabled.")
+except Exception as e:
+    print(f"[TTS] Kokoro load error: {e}")
+
+def _normalize_audio(audio):
+    if isinstance(audio, np.ndarray):
+        return audio.astype(np.float32)
+    if hasattr(audio, "numpy"):
+        return np.asarray(audio.numpy(), dtype=np.float32)
+    if hasattr(audio, "cpu"):
+        return np.asarray(audio.cpu().numpy(), dtype=np.float32)
+    if hasattr(audio, "samples"):
+        return np.asarray(audio.samples, dtype=np.float32)
+    return np.asarray(audio, dtype=np.float32)
+
+
+def speak_text(text: str):
+    """Synthesize text with Qwen3-TTS or Kokoro and play it. Blocking."""
+    if not text.strip():
+        return
+
+    audio = None
+    sample_rate = None
+
+    if qwen_tts_model is not None:
+        try:
+            if qwen_ref_audio_path and qwen_ref_text:
+                # Pass ref audio/text directly — avoids pre-tokenization CUDA assertion
+                audio_tuple = qwen_tts_model.generate_voice_clone(
+                    text,
+                    ref_audio=qwen_ref_audio_path,
+                    ref_text=qwen_ref_text,
+                    non_streaming_mode=True,
+                )
+            else:
+                audio_tuple = qwen_tts_model.generate_defaults(text, non_streaming_mode=True)
+            audio_list, sample_rate = audio_tuple
+            if audio_list:
+                audio = np.concatenate(audio_list)
+                print(f"[TTS] Qwen3-TTS synthesized {len(audio)/sample_rate:.1f}s audio")
+        except Exception as qwen_e:
+            print(f"[TTS] Qwen3-TTS generation failed: {qwen_e}")
+            audio = None
+
+    if audio is None and kokoro_tts is not None:
+        try:
+            audio = kokoro_tts.generate(text, sid=0, speed=1.1)
+            sample_rate = audio.sample_rate
+            print("[TTS] Using Kokoro TTS for synthesis.")
+        except Exception as e:
+            print(f"[TTS] speak_text error: {e}")
+            return
+
+    if audio is None:
+        return
+
     try:
-        r = httpx.post(TTS_URL, json={"model":"chatterbox","input":text,"voice":"buddy"}, timeout=90.0)
-        r.raise_for_status(); return r.content
-    except Exception as e: print(f"[TTS Error] {e}"); return None
+        arr = _normalize_audio(audio)
+        if not audio_state["interrupt_flag"].is_set():
+            set_ui_state("speaking", "Speaking...")
+            play_numpy_audio(arr, sample_rate or 16000)
+    except Exception as e:
+        print(f"[TTS] speak_text error: {e}")
 
 def stream_ollama_sentences(messages, on_sentence):
     full, buf = "", ""
+    # Only split if sentence is long enough (e.g. 30 chars) or it's a clear end of thought
+    # This prevents Buddy from speaking 3-word bursts like "Heh." "Yeah."
     END = re.compile(r"(?<=[.!?])\s+")
     try:
-        with httpx.stream("POST",OLLAMA_URL,json={"model":OLLAMA_MODEL,"messages":messages,"stream":True},timeout=180.0) as r:
+        payload = {
+            "model": OLLAMA_MODEL,
+            "messages": messages,
+            "stream": True,
+            "options": {"temperature": 1.1} 
+        }
+        with httpx.stream("POST",OLLAMA_URL,json=payload,timeout=180.0) as r:
             for line in r.iter_lines():
                 if not line: continue
                 try: chunk = json.loads(line)
@@ -260,15 +411,26 @@ def stream_ollama_sentences(messages, on_sentence):
                     full += tok; buf += tok
                     parts = END.split(buf)
                     if len(parts) > 1:
+                        # Keep buffering if the current sentence is too short (unless it's the very end)
+                        # but don't buffer forever (max 100 chars)
                         for s in parts[:-1]:
                             s = s.strip()
-                            if s: on_sentence(s)
-                        buf = parts[-1]
+                            if s:
+                                # Logic: If the sentence is tiny (e.g. "Heh."), 
+                                # we wait for the next part to combine them.
+                                if len(s) < 35 and not chunk.get("done"):
+                                    # Too short, keep it in the buffer
+                                    continue 
+                                on_sentence(s)
+                                # Since we used 's', we need to remove it from 'buf'
+                                # But regex split is tricky to reconstruct perfectly.
+                                # Simple fix: clear the parts we used from buf.
+                                buf = buf[buf.find(s) + len(s):].strip()
                 if chunk.get("done"): break
         if buf.strip(): on_sentence(buf.strip())
     except Exception as e:
         print(f"[Ollama stream error] {e}")
-        if not full: full = f"*burp* Something broke: {e}"
+        if not full: full = f"Something broke: {e}"
     return full
 
 def capture_screen():
@@ -280,13 +442,12 @@ def capture_screen():
         return base64.b64encode(buf.getvalue()).decode()
 
 def extract_and_save_facts(user_text, buddy_reply, mem):
-    # UPDATED PROMPT: Strict filtering to only save highly important, long-term memory.
     prompt = (f"User: \"{user_text}\"\nBuddy: \"{buddy_reply}\"\n"
-              "Extract NEW, LONG-TERM IMPORTANT facts about the user ONLY. "
-              "Important means: core preferences, major life events, medical info, close relationships, or permanent details. "
-              "DO NOT extract trivial details, temporary states, conversational filler, or things the user is doing right now. "
-              "If there is nothing critically important to remember for the future, return an empty list []. "
-              "Return ONLY a valid JSON list of short strings.")
+              "Does this conversation reveal any PERMANENT, LIFE-CHANGING facts about the user that an AI should remember forever?\n"
+              "Examples of things worth saving: name, job, city, serious health condition, family members, long-term goals.\n"
+              "Examples of things NOT worth saving: what they're doing right now, casual questions, their mood, anything temporary.\n"
+              "If there's nothing genuinely important, return EXACTLY: []\n"
+              "Return ONLY a valid JSON list of short strings, nothing else.")
     try:
         res = httpx.post(OLLAMA_URL,json={"model":OLLAMA_MODEL,"messages":[{"role":"user","content":prompt}],"stream":False},timeout=20.0)
         m = re.search(r"\[.*?\]",res.json().get("message",{}).get("content","[]"),re.DOTALL)
@@ -300,13 +461,27 @@ def extract_and_save_facts(user_text, buddy_reply, mem):
 
 def assistant_thread():
     mem = load_memory()
-    def build_sys(): return BASE_SYSTEM_PROMPT + memory_context_snippet(mem)
-    history = [{"role":"system","content":build_sys()}]
+    history = [{"role":"system","content":BASE_SYSTEM_PROMPT + memory_context_snippet(mem)}]
 
-    print("Loading Whisper...")
-    set_ui_state("thinking","Loading AI model...")
-    wm = WhisperModel("tiny.en", device="cuda", compute_type="float16")
-    print("Whisper ready.")
+    print("[STT] Loading Parakeet ASR...")
+    set_ui_state("thinking", "Loading AI models...")
+    
+    asr_model = None
+    try:
+        import nemo.collections.asr as nemo_asr
+        
+        print("[STT] Fetching Parakeet from Nvidia (this will download once and cache)...")
+        # Automatically downloads and loads the 0.6B model into VRAM
+        asr_model = nemo_asr.models.ASRModel.from_pretrained(model_name="nvidia/parakeet-ctc-0.6b")
+        
+        if asr_model:
+            asr_model.eval()
+            # Change .to("cuda") to .to("cpu")
+            asr_model = asr_model.to("cpu")
+            print("[STT] Parakeet ready on CPU.")
+    except Exception as e:
+        print(f"[STT] Failed to load Parakeet: {e}")
+
     buf = np.zeros(0,dtype=np.float32)
 
     while True:
@@ -323,74 +498,150 @@ def assistant_thread():
                     audio_state["stream_active"] = True
                     set_ui_state("listening","Listening...")
 
+                    last_user_visible = True
+                    last_vision_check = time.time()
+
+                    # ── silence threshold tuning ──────────────────────────
+                    SILENCE_RMS   = 0.03   # Slightly higher to ignore background noise
+                    MIN_SPEECH_S  = 0.5     # minimum voiced audio before transcribing
+                    SILENCE_GATE_S = 1.2    # how long silence must last before we transcribe
+                    speech_started = False
+                    last_speech_t  = time.time()
+
                     while not audio_state["device_changed"].is_set():
-                        try: chunk = audio_state["queue"].get(timeout=0.1)
-                        except queue.Empty: continue
+                        text = ""
+                        try:
+                            chunk = audio_state["queue"].get(timeout=0.05)
+                            if audio_state["speaking"]:
+                                buf = np.zeros(0, dtype=np.float32)
+                                speech_started = False
+                                continue
+                            buf = np.append(buf, chunk.flatten())
+                            if len(buf) > SAMPLE_RATE * 10: buf = buf[-SAMPLE_RATE*10:]
 
-                        buf = np.append(buf, chunk.flatten())
-                        if len(buf) < SAMPLE_RATE*0.8: continue
-                        if len(buf) > SAMPLE_RATE*8: buf = buf[-SAMPLE_RATE*8:]
-                        if audio_state["speaking"]: buf = np.zeros(0,dtype=np.float32); continue
+                            rms = float(np.sqrt(np.mean(chunk.flatten()**2)))
+                            #print(f"Live Vol: {rms:.5f} | Threshold: {SILENCE_RMS}", end='\r')
+                            if rms > SILENCE_RMS:
+                                speech_started = True
+                                last_speech_t = time.time()
+                            elif speech_started and (time.time() - last_speech_t) > SILENCE_GATE_S:
+                                print(f"\n[Gate] Triggered! Audio length: {len(buf)/SAMPLE_RATE:.1f}s | Parakeet loaded: {asr_model is not None}")
+                                # We had speech and now have silence — transcribe!
+                                if len(buf) >= int(SAMPLE_RATE * MIN_SPEECH_S) and asr_model:
+                                    import os as _os
+                                    import tempfile
+                                    
+                                    # 1. Normalize the audio so Parakeet can hear quiet mics
+                                    audio_data = buf.astype(np.float32)
+                                    max_amp = np.max(np.abs(audio_data))
+                                    if max_amp > 0:
+                                        audio_data = audio_data / max_amp 
+                                        
+                                    # 2. Safely create a temp file and FORCE 16-bit PCM for Parakeet
+                                    temp_name = _os.path.join(tempfile.gettempdir(), "buddy_stt_temp.wav")
+                                    try:
+                                        sf.write(temp_name, audio_data, SAMPLE_RATE, subtype='PCM_16')
+                                        print(f"\n[STT Debug] Sent {len(audio_data)/SAMPLE_RATE:.1f}s of audio. Max raw volume: {max_amp:.4f}")
+                                        
+                                        transcripts = asr_model.transcribe([temp_name])
+                                        
+                                        if transcripts:
+                                            raw = transcripts[0]
+                                            if hasattr(raw, 'text'):
+                                                text = raw.text.strip().lower()
+                                            else:
+                                                text = str(raw).strip().lower()
+                                            print(f"[STT Debug] Parakeet heard: '{text}'")
+                                            
+                                    except Exception as stt_err:
+                                        print(f"[STT Error] {stt_err}")
+                                    finally:
+                                        if _os.path.exists(temp_name):
+                                            try: _os.remove(temp_name)
+                                            except: pass
+                                            
+                                    if text is None: text = ""
+                                buf = np.zeros(0, dtype=np.float32)
+                                speech_started = False
 
-                        last_rms = float(np.sqrt(np.mean(buf[-int(SAMPLE_RATE*0.5):]**2)))
-                        if last_rms > 0.006: continue
-
-                        segs, _ = wm.transcribe(buf,beam_size=1,best_of=1,temperature=0.0,
-                            vad_filter=True,vad_parameters={"threshold":0.2,"min_silence_duration_ms":250})
-                        text = " ".join(s.text for s in segs).strip().lower()
+                        except queue.Empty:
+                            if time.time() - last_vision_check > 2.0:
+                                last_vision_check = time.time()
+                                try:
+                                    vdata = json.loads(latest_vision_state)
+                                    curr_vis = vdata.get("user_visible", True)
+                                    if not curr_vis and last_user_visible:
+                                        text = "[SYSTEM EVENT: Pranav is gone.]"
+                                    last_user_visible = curr_vis
+                                except: pass
 
                         if not text:
-                            buf = buf[-SAMPLE_RATE:]; continue
+                            continue
 
-                        buf = np.zeros(0,dtype=np.float32)
                         set_ui_state("thinking","Thinking...")
                         send_ui_chat("user",text)
                         log_conversation("user",text)
 
                         img_b64 = capture_screen() if any(p in text for p in SCREEN_TRIGGER_PHRASES) else None
-                        msg: dict = {"role":"user","content":text}
-                        if img_b64: msg["images"] = [img_b64]
+                        
+                        # Always include latest Kinect frame if available
+                        kinect_frame_path = BASE_DIR / "memory" / "kinect_latest.jpg"
+                        kinect_b64 = None
+                        if kinect_frame_path.exists():
+                            try:
+                                kinect_b64 = base64.b64encode(kinect_frame_path.read_bytes()).decode()
+                            except: pass
+                        
+                        # Inject live vision context directly into user message (fresh every turn)
+                        vision_ctx = f"\n\n[VISUAL CONTEXT: {latest_vision_state}]"
+                        msg: dict = {"role":"user","content": text + vision_ctx}
+                        images = []
+                        if img_b64: images.append(img_b64)
+                        if kinect_b64: images.append(kinect_b64)
+                        if images: msg["images"] = images
                         msgs = history + [msg]
 
                         spoken: list[str] = []
                         data_results: list[str] = []
-                        tts_q  = queue.Queue()
+                        tts_q = queue.PriorityQueue()
                         tts_ev = threading.Event()
+                        sentence_counter = [0]
 
                         def on_sentence(s):
                             clean, results, has_data = parse_and_run_tools(s)
                             if results and has_data: data_results.append(results)
-                            if clean: spoken.append(clean); tts_q.put(clean)
+                            if clean:
+                                spoken.append(clean)
+                                tts_q.put((sentence_counter[0], clean))
+                                sentence_counter[0] += 1
 
                         def tts_worker():
                             while True:
                                 try:
-                                    s = tts_q.get(timeout=8.0)
+                                    item = tts_q.get(timeout=8.0)
+                                    seq_id, s = item
                                     if s is None: break
-                                    wav = get_tts_audio(s)
-                                    if wav and not audio_state["interrupt_flag"].is_set():
-                                        set_ui_state("speaking","Speaking...")
-                                        play_audio(wav)
+                                    if not audio_state["interrupt_flag"].is_set():
+                                        speak_text(s)
                                 except queue.Empty: break
                             tts_ev.set()
 
                         tt = threading.Thread(target=tts_worker,daemon=True); tt.start()
                         raw = stream_ollama_sentences(msgs,on_sentence)
-                        tts_q.put(None)
+                        tts_q.put((999999, None))
 
                         if data_results:
                             tts_ev.wait(timeout=30.0)
                             fu_msgs = msgs + [
                                 {"role":"assistant","content":raw},
-                                {"role":"user","content":f"[TOOL RESULT]: {' | '.join(data_results)}\nSpeak this as Rick, one punchy sentence."}
+                                {"role":"user","content":f"[TOOL RESULT]: {' | '.join(data_results)}\nSpeak this as Butcher, one punchy sentence."}
                             ]
                             try:
                                 r2 = httpx.post(OLLAMA_URL,json={"model":OLLAMA_MODEL,"messages":fu_msgs,"stream":False},timeout=20.0)
                                 ft,_,_ = parse_and_run_tools(r2.json().get("message",{}).get("content","").strip())
                                 if ft:
                                     spoken.append(ft)
-                                    wav = get_tts_audio(ft)
-                                    if wav: set_ui_state("speaking","Speaking..."); play_audio(wav)
+                                    speak_text(ft)
                             except Exception as e: print(f"[Followup] {e}")
                         else:
                             tts_ev.wait(timeout=60.0)
@@ -404,7 +655,7 @@ def assistant_thread():
                         if len(history) > 11: history = [history[0]] + history[-10:]
 
                         threading.Thread(target=extract_and_save_facts,args=(text,reply,mem),daemon=True).start()
-                        history[0] = {"role":"system","content":build_sys()}
+                        history[0] = {"role":"system","content":BASE_SYSTEM_PROMPT + memory_context_snippet(mem)}
 
                         while not audio_state["queue"].empty(): audio_state["queue"].get_nowait()
                         buf = np.zeros(0,dtype=np.float32)
@@ -414,14 +665,14 @@ def assistant_thread():
             except Exception as device_error:
                 print(f"[Device Error] Failed to open mic {cur_mic}: {device_error}")
                 print("[Device Error] Falling back to default system device.")
-                audio_state["mic_id"] = None 
-                import time; time.sleep(2) 
+                audio_state["mic_id"] = None
+                time.sleep(2)
 
             print("Device changed or errored, restarting loop...")
             audio_state["stream_active"] = False
         except Exception as e:
             print(f"Main loop error: {e}"); audio_state["stream_active"] = False
-            import time; time.sleep(1)
+            time.sleep(1)
 
 async def volume_broadcaster():
     while True:
@@ -442,8 +693,17 @@ app = FastAPI(lifespan=lifespan)
 async def ws_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
-        while True: await websocket.receive_text()
-    except WebSocketDisconnect: manager.disconnect(websocket)
+        while True:
+            try:
+                await asyncio.wait_for(websocket.receive_text(), timeout=20.0)
+            except asyncio.TimeoutError:
+                # Send a ping to keep the browser connection alive
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except Exception:
+                    break
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
 
 @app.get("/api/devices")
 async def get_devices():
@@ -490,9 +750,7 @@ async def set_mute(req: MuteRequest):
 @app.post("/api/test_speaker")
 async def test_speaker():
     def run():
-        set_ui_state("speaking","Testing Speaker...")
-        wav = get_tts_audio("Oi cunt, what the fok does yeh farking want?")
-        if wav: play_audio(wav)
+        speak_text("Oi mate, speaker's working. What do you need?")
         while not audio_state["queue"].empty():
             try: audio_state["queue"].get_nowait()
             except: break
@@ -523,6 +781,18 @@ async def planner_events():
         from buddy_planner import list_events
         return {"events":list_events("all")}
     return {"events":"unavailable"}
+
+class VisionStateRequest(BaseModel):
+    state: str
+
+@app.post("/api/reload_voice")
+async def reload_voice():
+    success = load_qwen_reference()
+    if success:
+        send_ui_thought("Voice reference reloaded successfully.")
+        return {"status": "ok", "message": "Voice reference reloaded."}
+    else:
+        return {"status": "error", "message": "Failed to reload voice reference. Check buddy_voice/ folder."}
 
 app.mount("/",StaticFiles(directory=str(UI_DIR),html=True),name="ui")
 
